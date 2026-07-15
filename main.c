@@ -2,6 +2,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef enum Type
+{
+	T_Vector,
+	T_Book
+} Type;
+
+typedef struct ElementRecord {
+    Type type;
+    int offset;    
+} ElementRecord;
+
 typedef struct Vector
 {
 	float x, y, z, w;
@@ -18,6 +29,8 @@ typedef struct Manager
 	void* data;
 	int size;
 	int total;
+	
+	ElementRecord* records;
 } Manager;
 
 Manager* InitManager();
@@ -45,6 +58,7 @@ Manager* InitManager()
 {
 	Manager* manager =malloc(sizeof(Manager));
 	manager->data = NULL;
+	manager->records = NULL;
 	manager->size = 0;
 	manager->total = 0;
 	return manager;
@@ -64,6 +78,17 @@ Vector CreateVector(Manager* manager)
     }
 	
 	manager->data = data;
+	
+	ElementRecord* newRecords = realloc(manager->records, (manager->size + 1) * sizeof(ElementRecord));
+    if (newRecords == NULL) {
+        printf("Failed to allocate records! \n");
+        ReleaseManager(manager);
+        exit(1);
+    }
+    manager->records = newRecords;
+    manager->records[manager->size].type = T_Vector;
+    manager->records[manager->size].offset = currentTotal;
+	
 	manager->size += 1;
 	manager->total += sizeof(Vector);
 	
@@ -93,6 +118,17 @@ Book CreateBook(Manager* manager)
     }
 	
 	manager->data = data;
+	
+	ElementRecord* newRecords = realloc(manager->records, (manager->size + 1) * sizeof(ElementRecord));
+    if (newRecords == NULL) {
+        printf("Failed to allocate records! \n");
+        ReleaseManager(manager);
+        exit(1);
+    }
+    manager->records = newRecords;
+    manager->records[manager->size].type = T_Book;      
+    manager->records[manager->size].offset = currentTotal; 
+	
 	manager->size += 1;
 	manager->total += sizeof(Book);
 	
@@ -108,6 +144,27 @@ Book CreateBook(Manager* manager)
 
 void ReleaseManager(Manager* manager)
 {
-	free(manager->data);
-	free(manager);
+	if (manager == NULL) return;
+
+    for (int i = 0; i < manager->size; i++) {
+
+        void* itemAddr = (char*)manager->data + manager->records[i].offset;
+        
+        switch (manager->records[i].type) {
+            case T_Book:
+                printf("Releasing Book at offset %d\n", manager->records[i].offset);
+                break;
+                
+            case T_Vector:
+			    printf("Releasing Vector at offset %d\n", manager->records[i].offset);
+                break;
+            
+            default:
+                break;
+        }
+    }
+
+    free(manager->records); 
+    free(manager->data);  
+    free(manager);       
 }
