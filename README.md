@@ -1,50 +1,79 @@
 # A-Simpler-Memory-Manager
 
-A minimalist C memory manager for storing heterogeneous data types in a single contiguous memory block using safe handles and dynamic byte offsets.
+A minimalist, type-safe Handle Management System in C designed to store and manage heterogeneous structures using an indirection table and stable IDs.
 
 ---
 
 ## Introduction
 
-This project addresses classic heap fragmentation and dangling pointer issues in C by keeping track of the total bytes allocated and utilizing a **Handle-based Tracking System**. 
+This project addresses classic dangling pointer and unpredictable memory lifecycle issues in C by utilizing a Handle-based Tracking System.
 
-By combining `realloc` with byte-level copying via `memcpy` and memory shifting via `memmove`, it allows you to safely store, retrieve, and delete various structures of different sizes and layouts within a single contiguous heap memory block.
+By introducing an indirection layer (`ElementRecord`) between application logic and raw memory, it allows you to dynamically allocate, retrieve, and delete various independent structures (`Vector`, `Book`) without exposing their actual heap addresses directly to the caller.
 
 ---
 
 ## How It Works
 
-The core mechanism of this manager consists of three pillars: **byte-length-based physical offset addressing**, a **metadata registry**, and **handles**.
+The core mechanism of this manager consists of three pillars: independent element tracking, a metadata registry, and stable handles.
 
-### 1. Track Total Bytes & Precise Reallocation
-The `Manager` struct maintains a `total` variable to record the exact size (in bytes) currently occupied by the contiguous dynamic memory block. Each time a new element is added, the block is reallocated with a target size of `manager->total + sizeof(new_type)`.
+### 1. Independent Heap Allocation & Registry Expansion
+Unlike managing a single raw byte buffer, every time `CreateVector` or `CreateBook` is called, a separate chunk of heap memory is allocated for that individual object. The manager then uses `realloc` to expand its central registry array (`ElementRecord* records`) to accommodate the new object's metadata.
 
-### 2. Pointer Offset Writing
-Since pointer arithmetic is not permitted on `void*`, we cast `manager->data` to a 1-byte addressable `char*` pointer and offset it by `currentTotal` bytes to find the exact target address:
-```c
-void* targetAddr = (char*)manager->data + currentTotal;
-```
+### 2. Handle System & Indirection Mapping
+To prevent application code from holding onto unstable raw pointers that might become wild or hard to trace, the system wraps an internal lookup token into a lightweight `Handle`:
 
-### 3. Handle System & Metadata Registry
-To prevent dangling pointers caused by realloc shifting the memory block's base address, users are returned a lightweight Handle instead of a raw pointer.
+- A central registry table maps each unique `Handle.id` to its object `Type` (e.g., `VECTOR`, `BOOK`) and its actual heap address pointer (`void* ptr`).
 
-- A registry table (ElementRecord) maps each unique Handle.id to its type and physical offset inside the block.
-- When retrieving elements, the address is resolved dynamically:
+- Users hold onto the `Handle`, while the manager retains ownership of the raw pointers.
+
+### 3. Dynamic Pointer Resolution
+When an element needs to be accessed, the raw pointer is resolved dynamically on-the-fly by scanning the registry table:
+
 ```c
 void* GetElements(Manager* manager, Handle handle) {
     for (int i = 0; i < manager->size; i++) {
         if (manager->records[i].id == handle.id) {
-            return (char*)manager->data + manager->records[i].offset;
+            return manager->records[i].ptr; // Return the exact heap address
         }
     }
     return NULL;
 }
 ```
 
-### 4. Compact-on-Delete (Removal Shifting)
-When removing an element mid-way via RemoveElements, the manager:
+### 4. Registry Compaction-on-Delete
+When removing an element via `RemoveElements`, the manager:
 
-1. Calculates the remaining bytes behind the deleted element: `moveBytes = total - (targetOffset + targetSize)`.
-2. Uses memmove to safely shift all subsequent elements forward, closing the memory gap.
-3. Updates the registry table by shifting subsequent records and adjusting their `offsets (offset -= targetSize)`.
-4. Shrinks the contiguous buffer via realloc to keep memory footprint perfectly compacted.
+1. Locates the targeted item in the registry, reads its type, and safely `free()`s its independent heap memory.
+2. Shifts all subsequent metadata records forward in the registry array using a loop to close the slot gap.
+3. Shrinks the central registry array via `realloc` to keep the metadata footprint perfectly compacted.
+
+---
+
+## Quick Start & Usage Pattern
+⚠️Best Practice Rule: Always adopt a "Fetch-and-Use" pattern. Never cache the resolved raw pointers long-term, as elements can be explicitly deleted or freed from the system under the hood, rendering cached pointers instantly invalid. Rely strictly on the `Handle`.
+
+```c
+// 1. Initialize the Manager
+Manager* manager = InitManager();[cite: 1]
+
+// 2. Create Heterogeneous Objects & Receive Stable Handles
+Handle hVector = CreateVector(manager); // Allocates a Vector on heap[cite: 1]
+Handle hBook   = CreateBook(manager);   // Allocates a Book on heap[cite: 1]
+
+// 3. Safe Dynamic Access (Temporary pointer resolution)
+Vector* v = (Vector*)GetElements(manager, hVector);[cite: 2]
+if (v) {
+    printf("Vector coordinates: %f, %f\n", v->x, v->y);[cite: 1]
+}
+
+// 4. Safe Removal (Frees the object memory and compacts the registry table)
+RemoveElements(manager, hVector);[cite: 1]
+
+// 5. Cleanup Everything safely at once
+ReleaseManager(manager);[cite: 1]
+```
+
+---
+
+## 📋 License
+This project is open-source and available under the [MIT License](./LICENSE).
